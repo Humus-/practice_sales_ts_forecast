@@ -1,0 +1,574 @@
+title: "store sales Time series analysis"
+output:
+  html_document:
+    number_sections: yes
+    fig_caption: yes
+    toc: yes
+    fig_width: 20
+    fig_height: 12
+    theme: flatly
+    highlight: tango
+    code_folding: hide
+    df_print: paged
+---
+
+```{r include=FALSE}
+library(tidyverse)
+library(magrittr)
+library(Metrics)
+library(plotly)
+#library(OpenStreetMap)
+library(maps)
+library(zeallot)
+library(lubridate)
+library(cowplot)
+#library(forecast)
+library(dplyr)
+library(png)
+library(tsibble)
+library(fable)
+library(fabletools)
+library(feasts)
+library(tsibbledata)
+library(tibble)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(lubridate)
+library(ggplot2)
+library(fabletools)
+library(feasts)
+library(corrplot)
+```
+
+```{r include=FALSE}
+#setwd('C:/Users/shahy/Desktop/Semester 2/SDM2/project') 
+train_data = read_csv('train.csv')
+transactions_data = read_csv('transactions.csv')
+stores_data = read_csv('stores.csv')
+oil_data = read_csv('oil.csv')
+hol_events_data = read_csv('holidays_events.csv')
+sub = read_csv('sample_submission.csv')
+test = read_csv('test.csv')
+cities <- read_csv('worldcities.csv')
+```
+
+
+```{r}
+head(train_data, 10)
+```
+```{r}
+# Fix dates
+train_data$day <- train_data$date %>% day()
+train_data$month <- train_data$date %>% month()
+train_data$month_lab <- train_data$date %>% month(label = TRUE)
+train_data$year <- train_data$date %>% year()
+train_data$week <- train_data$date %>% week()
+train_data$week_day <- train_data$date %>% wday(week_start = getOption("lubridate.week.start", 1), label = TRUE)
+head(train_data, 10)
+```
+
+
+```{r}
+as.data.frame(table(train_data$family))
+```
+
+```{r}
+sapply(train_data, function(x) sum(is.na(x)))
+```
+
+
+
+```{r}
+a <- train_data %>% group_by(family) %>% summarise(mean_sales = round(mean(sales),2),
+                                              median_sales = round(median(sales),2),
+                                              IQR_sales = IQR(sales),
+                                              max_sales = max(sales),
+                                              total_sales = sum(sales))
+a
+```
+
+
+```{r fig.height=5, fig.width=10}
+b <- ggplot(a)+
+    geom_col(aes(x = family, y = mean_sales, fill = family))+
+    theme(axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+    labs(title = 'Proportion of sales by product family (rollover to see labels)',
+         x = 'Product family',
+         y = 'Average daily sales',
+         legend = 'Family')
+
+ggplotly(b, width = 900, height = 450)
+
+
+```
+
+
+```{r}
+train_data %>% group_by(store_nbr) %>% summarise(avg_sales = mean(sales),
+                                            total_sales = sum(sales),
+                                            median_sales = median(sales),
+                                            IQR_sals = IQR(sales),
+                                            IQR_to_avg_sales = IQR(sales)/mean(sales))
+```
+
+```{r fig.height=5, fig.width=10, message=FALSE, warning=FALSE}
+plt <- train_data %>% 
+  filter(store_nbr <= 30 & sales > 0) %>%  
+  group_by(date, store_nbr) %>% 
+  summarise(daily_sales = sum(sales), .groups = "keep") %>% 
+  filter(daily_sales <= 45000) %>% 
+  ggplot()+
+    geom_density(aes(x = daily_sales, fill = as_factor(store_nbr)), alpha = 0.5)+
+    #scale_x_log10()+
+    labs(title = "Density plot of stores 1 to 30 ",
+         subtitle = "Click legend values to show/hide stores",
+         fill = "Store number",
+         x = "Total daily sales")
+    #xlim(0,45000) 
+ggplotly(plt)
+
+```
+
+This is interesting. It seems like many, but not all, of the stores' daily sales for a bi-modal distribution. 
+```{r fig.height=8, fig.width=10, message=FALSE, warning=FALSE}
+plt1 <- train_data %>% 
+  group_by(date) %>% 
+  summarise(avg_daily_sales = mean(sales)) %>% 
+  filter(date <= '2014-01-01') %>% 
+  ggplot()+
+    geom_line(aes(x = date, y = avg_daily_sales))+
+    labs(title = 'Average total sales by date',
+         subtitle = 'First quarter 2013',)
+
+plt2 <- train_data %>% 
+  group_by(date) %>% 
+  summarise(avg_daily_sales = mean(sales),
+            wday = week_day, .groups = "keep") %>% 
+  filter(date <= '2013-04-01') %>% 
+  ggplot()+
+    geom_col(aes(x = date, y = avg_daily_sales, fill=wday))+
+    scale_fill_viridis_d()+
+    labs(x = 'Date',
+         y = 'Averge daily sales',
+         fill = 'Day of week')
+
+plot_grid(plotlist = list(plt1,plt2), nrow = 2)
+```
+
+```{r fig.height=8, fig.width=10}
+plt1 <- train_data %>% 
+  group_by(week_day) %>% 
+  summarise(avg_sales_by_day = mean(sales)) %>% 
+  ggplot()+
+    geom_col(aes(x=week_day, y=avg_sales_by_day, fill = week_day), size=1, colour="black")+
+    scale_fill_viridis_d()+
+    labs(title = "Average sales by day of the week",
+         x = "Day of the week",
+         y = "Average daily sales",
+         fill = "Day of week")+
+    guides(fill = "none")
+
+plt2 <- train_data %>% 
+  group_by(month_lab) %>% 
+  summarise(avg_sales_by_day = mean(sales)) %>% 
+  ggplot()+
+    geom_col(aes(x=month_lab, y=avg_sales_by_day, fill = month_lab), size=1, colour="black")+
+    scale_fill_viridis_d()+
+    labs(title = "Average sales by month of the year",
+         x = "Month",
+         y = "Average monthly sales",
+         fill = "Month")+
+    guides(fill = "none")
+
+plt3 <- train_data %>% 
+  group_by(year) %>% 
+  summarise(avg_sales_by_day = mean(sales)) %>% 
+  ggplot()+
+    geom_col(aes(x=year, y=avg_sales_by_day, fill = as_factor(year)), size=1, colour="black")+
+    scale_fill_viridis_d()+
+    labs(title = "Average sales by year",
+         x = "Year",
+         y = "Average monthly sales",
+         fill = "Year")+
+    guides(fill = "none")
+
+plt4 <- train_data %>% 
+  group_by(week) %>% 
+  summarise(avg_sales_by_day = mean(sales)) %>% 
+  ggplot()+
+    geom_col(aes(x=week, y=avg_sales_by_day, fill = as_factor(week)), size=1, colour="black")+
+    scale_fill_viridis_d()+
+    labs(title = "Average sales by week",
+         x = "Week",
+         y = "Average weekly sales",
+         fill = "Week")+
+    guides(fill = "none")
+
+plot_grid(plotlist = list(plt1,plt2, plt3, plt4), nrow = 2)
+```
+
+```{r fig.height=5, fig.width=10}
+stores_data$type %>% 
+  table() %>% 
+  as.data.frame() %>% 
+  ggplot()+
+    geom_col(aes(y = Freq, x = ., fill = as_factor(.)), colour='black', size=1)+
+    scale_fill_viridis_d()+
+  labs(title = 'Distribution of store types',
+       fill = 'Type:',
+       x = 'Store type')
+  
+```
+
+```{r}
+left_join(stores_data, transactions_data, by = 'store_nbr') %>% group_by(type) %>% summarise(avg_trans = mean(transactions),
+                                                                                   total_trans = sum(transactions),
+                                                                                   sd_trans = sd(transactions))
+
+```
+
+```{r fig.height=5, fig.width=10}
+left_join(stores_data, train_data, by = 'store_nbr') %>% 
+  group_by(type) %>% 
+  summarise(avg_sales = mean(sales),
+            total_sales = sum(sales),
+            sd_sales = sd(sales),
+            .groups = 'keep')
+```
+
+
+
+```{r fig.height=5, fig.width=10}
+left_join(stores_data, train_data, by = 'store_nbr') %>% 
+  group_by(type, year) %>% 
+  summarise(avg_sales = mean(sales),
+            total_sales = sum(sales),
+            sd_sales = sd(sales),
+            .groups = 'keep') %>% 
+ggplot()+geom_line(aes(x = year, y = avg_sales, colour = type))+
+    labs(title = "Average daily sales per year by store type",
+         y = "Average daily sales")
+```
+
+
+
+
+```{r message=FALSE, warning=FALSE}
+ec_cities <- data.frame(city=stores_data$city %>% unique())
+ec_cities <- inner_join(ec_cities, filter(cities, country=='Ecuador'), by='city')
+ec_cities <- bind_rows(ec_cities, filter(cities, id == '1218148017'))
+ec_cities_2 <- bind_cols(ec_cities, projectMercator(lat = ec_cities$lat, long = ec_cities$lng) %>% as.data.frame())
+
+```
+
+
+```{r fig.height=5, fig.width=10}
+cities_by_cluster <- left_join(stores_data, ec_cities_2, by = 'city')
+clust <- cities_by_cluster %>% group_by(cluster) %>% summarise(avg_pop=mean(population, na.rm = T),
+                                                      total_pop=sum(population, na.rm = T)) %>% 
+  ggplot()+geom_col(aes(x = cluster, y = avg_pop, fill=as_factor(cluster)), size=0.5, colour = 'black')+guides(fill='none')+
+  labs(title = 'Average area population by store cluster.')+
+  scale_fill_viridis_d()
+ggplotly(clust)
+```
+
+
+```{r fig.height=5, fig.width=10}
+df <- left_join(train_data, stores_data, by = 'store_nbr') 
+ggplot(df)+
+  geom_col(aes(x = cluster, y = sales, fill = as_factor(type)))+
+  labs(title = "Breakdown of sales by cluster and type",
+       fill = "Type",
+       x = "Cluster",
+       y = "Sales")+
+  scale_fill_viridis_d()
+
+```
+```{r fig.height=6, fig.width=10, message=FALSE, warning=FALSE}
+EcuadorMap <- openmap(c(1.494, -81.541),
+                      c(-5.069,-76),
+   type = "osm",
+#   type = "esri",
+#   type = "nps",
+    minNumTiles=6)
+
+
+ec_map <- OpenStreetMap::autoplot.OpenStreetMap(EcuadorMap, expand =T)+
+  geom_point(data=ec_cities_2,aes(x = x, y = y, colour = city, size=population, alpha = 0.7))+
+  geom_label(data=ec_cities_2, aes(x = x, y = y, label = city), nudge_x = 5)+
+  labs(title = 'Map of Ecuador with store locations (rollover for details).')+
+  guides(population='none', alpha='none')
+ggplotly(ec_map, 
+         tooltip = c('city','population'), 
+         height = 600, 
+         width = 800,
+         layerData=1)
+```
+
+
+
+## Transactions
+
+```{r}
+train_trans <- train_data %>% 
+  group_by(date, store_nbr) %>% 
+  summarise(sales_by_day = sum(sales), .groups = "keep") %>% 
+  left_join(transactions_data, by = c("date", "store_nbr"))
+train_trans[is.na(train_trans)] <- 0
+train_trans %<>% mutate(avg_cost_per_trans = sales_by_day/transactions)
+
+train_trans %>% summary()
+```
+
+```{r}
+transactions_data %>% group_by(date) %>% summarise(sum_trans=mean(transactions))
+```
+
+
+
+The first thing to note is that the date range extends beyond the dates in the training set.
+
+```{r fig.height=5, fig.width=10}
+p1 <- hol_events_data %>% ggplot()+geom_bar(aes(x = locale, fill = locale), colour = 'black', size = 1)+
+  scale_fill_viridis_d()+
+  labs(title = "Holiday locale")+
+  guides(fill="none")
+
+p2 <- hol_events_data %>% ggplot()+geom_bar(aes(x = type, fill = type), colour = 'black', size = 1)+
+  scale_fill_viridis_d()+
+  labs(title = "Holiday type")+
+  guides(fill="none")
+
+plot_grid(plotlist = list(p1,p2), nrow = 1)
+```
+
+Number of national holidays in each month in the date:
+```{r}
+hol_events <- hol_events_data
+hol_events$day <- hol_events$date %>% day()
+hol_events$month <- hol_events$date %>% month()
+hol_events$month_lab <- hol_events$date %>% month(label = TRUE)
+hol_events$year <- hol_events$date %>% year()
+hol_events$week <- hol_events$date %>% week()
+hol_events$week_day <- hol_events$date %>% wday(week_start = getOption("lubridate.week.start", 1), label = TRUE)
+
+hol_events %>% 
+  filter(locale == "National" & transferred == "FALSE") %>% 
+  group_by(year, month_lab) %>% 
+  summarise(national_hols_per_month = n_distinct(description), .groups = "keep")
+
+
+```
+
+```{r}
+
+summary(oil_data$dcoilwtico)
+```
+#oil prices fluctuation 
+```{r fig.height=5, fig.width=10}
+oil_data %>% ggplot(aes(x = date, y = dcoilwtico, colour = dcoilwtico))+geom_line(na.rm = TRUE)+
+  labs(y = 'Oil price',
+       colour = 'Oil price',
+       title = 'Local price of oil during the training period')
+```
+
+#sales prices fluctuation 
+```{r fig.height=5, fig.width=10}
+train_data_sales <- train_data %>% select(date, sales) %>% group_by(date) %>% summarise(total = sum(sales))
+train_data_sales %>% ggplot(aes(x = date, y = total, colour = total))+geom_line(na.rm = TRUE)+
+  labs(y = 'sale ',
+       colour = 'sale ')
+```
+
+```{r fig.height=5, fig.width=10}
+train_data %>% 
+  filter(sales>0) %>% 
+  group_by(date) %>% 
+  summarise(avg_sales_per_day = mean(sales, na.rm=TRUE)) %>% 
+  right_join(oil_data, by='date') %>% 
+  ggplot()+
+    geom_line(aes(x = date, y = scale(dcoilwtico), colour = 'Oil_price'), na.rm = TRUE)+
+    geom_line(aes(x = date, y = scale(avg_sales_per_day), colour = 'Sales'), na.rm = TRUE)+
+  labs(title = "Total store sales compared to local oil prices: 2013-2018",
+       subtitle = "Data has been normalised for comparrison")
+
+```
+
+
+
+```{r fig.height=6, fig.width=10}
+
+# oil_4_years <- oil_data %>% filter(date<'2017-01-01') 
+# oil_4_years = tsibble(oil_4_years)
+# oil_4_years %>% 
+#   #ts(frequency = 52*4) %>% 
+#   model(STL(dcoilwtico, s.window = 'periodic')) %>% 
+#   components() %>%
+#   autoplot()+
+#     labs(title='STL Plot of Oil data (weekly frequency)')
+
+```
+
+
+                                                                                  
+```{r fig.height=6, fig.width=10}
+aspd <- train_data %>% 
+  filter(sales>0) %>% 
+  group_by(date) %>% 
+  summarise(avg_sales_per_day = mean(sales, na.rm=TRUE)) %>% 
+  filter(date<'2017-01-01')
+aspd$avg_sales_per_day %>% 
+  na.omit() %>% 
+  ts(frequency = 52*4) %>% 
+  stl(s.window = 'periodic') %>% 
+  autoplot()+
+    labs(title='STL Plot of daily average sales data (weekly frequency)')
+
+```
+
+
+```{r fig.height=6, fig.width=10}
+aspd$avg_sales_per_day %>% 
+  na.omit() %>% 
+  ts(frequency = 12*4) %>% 
+  stl(s.window = 'periodic') %>% 
+  autoplot()+
+    labs(title='STL Plot of daily average sales data (monthly frequency)')
+
+```
+
+# Modelling for time series
+
+```{r}
+#library(forecast)
+oil_data_modeling <- oil_data %>% mutate(date = format(as.Date(date), "%Y-%m")) %>% na.omit() %>% group_by(date) %>% summarise(total = sum(dcoilwtico)) 
+oil_data_modeling %>% mutate(date = yearmonth(date)) %>% tsibble(index = date) -> oil_ts_modeling
+oil_ts_modeling_test <- oil_ts_modeling %>% filter(date > yearmonth('2016-12'))
+oil_ts_modeling_train <- oil_ts_modeling %>% filter(date <= yearmonth('2016-12'))
+
+fit_arima <- oil_ts_modeling_train %>%
+  model(
+    arima_auto = ARIMA(log(total)),
+    arima = ARIMA(log(total)~0+pdq(3,0,3)+PDQ(1,1,0))
+  )
+fabletools::accuracy(fit_arima)
+report(fit_arima[1])
+report(fit_arima[2])
+fc_arima <- fit_arima %>% fabletools::forecast(h = "1 year")
+fc_arima %>% autoplot(oil_ts_modeling,level = 80)
+fabletools::accuracy(fc_arima,oil_ts_modeling)
+```
+
+```{r}
+fit_sn <- oil_ts_modeling_train %>%
+  model(
+    Mean = MEAN(total),
+    Naive = NAIVE(total),
+    Seasonal_Naive = SNAIVE(total),
+    Drift = RW(total ~ drift())
+  )
+
+# forecast next year (in training set)
+fc_sn <- fit_sn %>% fabletools::forecast(h = 12)
+# plot forecasts and actual data
+fc_sn %>% autoplot(oil_ts_modeling,level = NULL)
+fabletools::accuracy(fc_sn,oil_ts_modeling)
+
+```
+
+```{r}
+fit_ets <- oil_ts_modeling_train %>%
+  model(
+    ets_auto = ETS(log(total)),
+    ets = ETS(log(total) ~ error("A") + trend("A") + season("A"))
+  )
+fabletools::accuracy(fit_ets)
+report(fit_ets)
+report(fit_ets[1])
+
+
+fc <- fit_ets %>% fabletools::forecast(h = "1 years")
+fc %>% autoplot(oil_ts_modeling,level = 90)
+fabletools::accuracy(fc,oil_ts_modeling)
+
+```
+# joining all dataset:
+
+```{r}
+
+train_data1 <- left_join(train_data, stores_data, 
+             by="store_nbr")
+train_data1 <- left_join(train_data1, oil_data,
+                 by = 'date')
+train_data1 <- left_join(train_data1, transactions_data,
+                 by = c('date', 'store_nbr'))
+train_data1 <- left_join(train_data1, hol_events_data %>%
+                 select(-description, -transferred),
+                 by = c('date'))
+
+c1 <- cor(train_data1 %>% 
+            filter(complete.cases(train_data1)) %>%
+            select(sales, onpromotion, dcoilwtico, transactions, year))
+
+ #creating correlation matrix                  
+corrplot(c1,
+         method = c('color'),
+         addCoef.col = "black",
+         addgrid.col = "black",
+         tl.col = "black",
+        order = 'hclust')
+```
+
+# store sales prediction generally
+```{r}
+store_time_series <- train_data1 %>% select(date, sales)
+store_time_series_modeling <- store_time_series %>% mutate(date = format(as.Date(date), "%Y-%m")) %>% na.omit() %>% group_by(date) %>% summarise(total = sum(sales)) 
+store_time_series_modeling %>% View()
+store_time_series_modeling  %>% mutate(date = yearmonth(date)) %>% tsibble(index = date) -> store_modeling
+store_test <- store_modeling %>% filter(date > yearmonth('2016-12'))
+store_train <- store_modeling %>% filter(date <= yearmonth('2016-12'))
+fit_arima_sales <- store_train %>%
+     model(
+         arima_auto = ARIMA(log(total)),
+         arima = ARIMA(log(total)~0+pdq(3,0,3)+PDQ(1,1,0))
+     )
+fabletools::accuracy(fit_arima_sales)
+report(fit_arima_sales[1])
+report(fit_arima_sales[2])
+fc_arima_sales <- fit_arima_sales %>% fabletools::forecast(h = "1 year")
+fc_arima_sales %>% autoplot(store_modeling,level = 80)
+fabletools::accuracy(fc_arima,store_modeling)
+```
+
+
+```{r}
+fit_sn <- store_train %>%
+     model(
+         Mean = MEAN(total),
+         Naive = NAIVE(total),
+         Seasonal_Naive = SNAIVE(total),
+         Drift = RW(total ~ drift())
+     )
+ 
+# forecast next year (in training set)
+fc_sn <- fit_sn %>% fabletools::forecast(h = 12)
+# plot forecasts and actual data
+fc_sn %>% autoplot(store_modeling,level = NULL)
+fabletools::accuracy(fc_sn,store_modeling)
+
+```
+
+```{r}
+fit_ets <- store_train  %>%
+     model(
+         ets_auto = ETS(log(total)),
+         ets = ETS(log(total) ~ error("A") + trend("A") + season("A"))
+     )
+fabletools::accuracy(fit_ets)
+report(fit_ets)
+report(fit_ets[1])
+fc <- fit_ets %>% fabletools::forecast(h = "1 years")
+fc %>% autoplot(store_modeling,level = 90)
+fabletools::accuracy(fc,store_modeling)
+```
