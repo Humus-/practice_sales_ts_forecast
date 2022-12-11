@@ -17,7 +17,7 @@ library(tidyverse)
 library(magrittr)
 library(Metrics)
 library(plotly)
-#library(OpenStreetMap)
+library(OpenStreetMap)
 library(maps)
 library(zeallot)
 library(lubridate)
@@ -42,7 +42,7 @@ library(corrplot)
 ```
 
 ```{r include=FALSE}
-#setwd('C:/Users/shahy/Desktop/Semester 2/SDM2/project') 
+setwd('C:/Users/shahy/Desktop/Semester 2/SDM2/project') 
 train_data = read_csv('train.csv')
 transactions_data = read_csv('transactions.csv')
 stores_data = read_csv('stores.csv')
@@ -127,8 +127,9 @@ plt <- train_data %>%
          x = "Total daily sales")
     #xlim(0,45000) 
 ggplotly(plt)
-
+#density plot of sales compared to store number
 ```
+
 
 This is interesting. It seems like many, but not all, of the stores' daily sales for a bi-modal distribution. 
 ```{r fig.height=8, fig.width=10, message=FALSE, warning=FALSE}
@@ -154,6 +155,7 @@ plt2 <- train_data %>%
          fill = 'Day of week')
 
 plot_grid(plotlist = list(plt1,plt2), nrow = 2)
+#average daily sales by date
 ```
 
 ```{r fig.height=8, fig.width=10}
@@ -399,42 +401,41 @@ train_data %>%
 
 ```{r fig.height=6, fig.width=10}
 
-# oil_4_years <- oil_data %>% filter(date<'2017-01-01') 
-# oil_4_years = tsibble(oil_4_years)
-# oil_4_years %>% 
-#   #ts(frequency = 52*4) %>% 
-#   model(STL(dcoilwtico, s.window = 'periodic')) %>% 
-#   components() %>%
-#   autoplot()+
-#     labs(title='STL Plot of Oil data (weekly frequency)')
+#oil_4_years <- oil_data %>% filter(date<'2017-01-01') 
+#oil_4_years$dcoilwtico %>% 
+#  na.omit() %>% 
+ # ts(frequency = 52*4) %>% 
+#  STL(s.window = 'periodic') %>% 
+  #autoplot()+
+   # labs(title='STL Plot of Oil data (weekly frequency)')
 
 ```
 
 
                                                                                   
 ```{r fig.height=6, fig.width=10}
-aspd <- train_data %>% 
-  filter(sales>0) %>% 
-  group_by(date) %>% 
-  summarise(avg_sales_per_day = mean(sales, na.rm=TRUE)) %>% 
-  filter(date<'2017-01-01')
-aspd$avg_sales_per_day %>% 
-  na.omit() %>% 
-  ts(frequency = 52*4) %>% 
-  stl(s.window = 'periodic') %>% 
-  autoplot()+
-    labs(title='STL Plot of daily average sales data (weekly frequency)')
+#aspd <- train_data %>% 
+ # filter(sales>0) %>% 
+  #group_by(date) %>% 
+  #summarise(avg_sales_per_day = mean(sales, na.rm=TRUE)) %>% 
+  #filter(date<'2017-01-01')
+#aspd$avg_sales_per_day %>% 
+ # na.omit() %>% 
+  #ts(frequency = 52*4) %>% 
+  #stl(s.window = 'periodic') %>% 
+  #autoplot()+
+   # labs(title='STL Plot of daily average sales data (weekly frequency)')
 
 ```
 
 
 ```{r fig.height=6, fig.width=10}
-aspd$avg_sales_per_day %>% 
-  na.omit() %>% 
-  ts(frequency = 12*4) %>% 
-  stl(s.window = 'periodic') %>% 
-  autoplot()+
-    labs(title='STL Plot of daily average sales data (monthly frequency)')
+#aspd$avg_sales_per_day %>% 
+ # na.omit() %>% 
+  #ts(frequency = 12*4) %>% 
+  #stl(s.window = 'periodic') %>% 
+  #autoplot()+
+   # labs(title='STL Plot of daily average sales data (monthly frequency)')
 
 ```
 
@@ -481,11 +482,14 @@ fabletools::accuracy(fc_sn,oil_ts_modeling)
 fit_ets <- oil_ts_modeling_train %>%
   model(
     ets_auto = ETS(log(total)),
-    ets = ETS(log(total) ~ error("A") + trend("A") + season("A"))
+    ets = ETS(log(total) ~ error("A") + trend("A") + season("A")),
+    ets_mam = ETS(log(total) ~ error("M") + trend("A") + season("M"))
   )
 fabletools::accuracy(fit_ets)
 report(fit_ets)
 report(fit_ets[1])
+report(fit_ets[2])
+report(fit_ets[3])
 
 
 fc <- fit_ets %>% fabletools::forecast(h = "1 years")
@@ -522,9 +526,9 @@ corrplot(c1,
 
 # store sales prediction generally
 ```{r}
-store_time_series <- train_data1 %>% select(date, sales)
+store_time_series <- train_data %>% select(date, sales)
 store_time_series_modeling <- store_time_series %>% mutate(date = format(as.Date(date), "%Y-%m")) %>% na.omit() %>% group_by(date) %>% summarise(total = sum(sales)) 
-store_time_series_modeling %>% View()
+#store_time_series_modeling %>% View()
 store_time_series_modeling  %>% mutate(date = yearmonth(date)) %>% tsibble(index = date) -> store_modeling
 store_test <- store_modeling %>% filter(date > yearmonth('2016-12'))
 store_train <- store_modeling %>% filter(date <= yearmonth('2016-12'))
@@ -563,11 +567,14 @@ fabletools::accuracy(fc_sn,store_modeling)
 fit_ets <- store_train  %>%
      model(
          ets_auto = ETS(log(total)),
-         ets = ETS(log(total) ~ error("A") + trend("A") + season("A"))
+         ets = ETS(log(total) ~ error("A") + trend("A") + season("A")),
+         ets_mam = ETS(log(total) ~ error("M") + trend("A") + season("M"))
      )
 fabletools::accuracy(fit_ets)
 report(fit_ets)
 report(fit_ets[1])
+report(fit_ets[2])
+report(fit_ets[3])
 fc <- fit_ets %>% fabletools::forecast(h = "1 years")
 fc %>% autoplot(store_modeling,level = 90)
 fabletools::accuracy(fc,store_modeling)
